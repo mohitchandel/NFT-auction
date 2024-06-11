@@ -1,113 +1,183 @@
-import Image from "next/image";
+"use client";
+import { useEffect, useState } from "react";
+import { useAccount } from "wagmi";
+import lighthouse from "@lighthouse-web3/sdk";
+import { publicClient, walletClient } from "./helpers/viemconfig";
+import abi from "@/app/helpers/abi.json";
+import { Address } from "viem";
+import toast from "react-hot-toast";
+import Moralis from "moralis";
+
+const CONTRACT_ADDRESS = "0x43bA70c605fF68101d5eC64ac3E546E4bb70fbb9";
 
 export default function Home() {
+  const { address, isConnected } = useAccount();
+  const [nftName, setNftName] = useState<string>("");
+  const [nftDescription, setNftDescription] = useState<string>("");
+  const [nftImage, setNftImage] = useState<string>("");
+  const [nftMetaData, setNftMetaData] = useState<string>("");
+  const [userNft, setUserNft] = useState<any>([]);
+  const [loading, setLoading] = useState<boolean>(false);
+
+  const progressCallback = (progressData: any) => {
+    let percentageDone =
+      100 - +(progressData?.total / progressData?.uploaded)?.toFixed(2);
+    console.log(percentageDone);
+  };
+
+  const uploadFile = async (file: any) => {
+    const output = await lighthouse.upload(
+      file,
+      "5f06dacf.6c0e340f84834317a3482bd691fe28f1",
+      false,
+      null,
+      progressCallback
+    );
+    setNftImage(`https://gateway.lighthouse.storage/ipfs/${output.data.Hash}`);
+    console.log("File Status:", output);
+    console.log(
+      "Visit at https://gateway.lighthouse.storage/ipfs/" + output.data.Hash
+    );
+  };
+
+  const createMetaData = async () => {
+    const response = await lighthouse.uploadText(
+      JSON.stringify({ nftName, nftDescription, nftImage }),
+      "5f06dacf.6c0e340f84834317a3482bd691fe28f1",
+      nftName
+    );
+    console.log(response);
+    setNftMetaData(`https://gateway.lighthouse.storage/ipfs/${response}`);
+  };
+
+  const mintNft = async () => {
+    if (!nftName || !nftImage || !nftDescription) {
+      toast.error("Please fill all the fields");
+      return;
+    }
+    setLoading(true);
+    await createMetaData();
+    try {
+      const { request } = await publicClient.simulateContract({
+        address: CONTRACT_ADDRESS as Address,
+        abi: abi,
+        functionName: "mint",
+        args: [nftMetaData],
+        account: address,
+      });
+      await walletClient.writeContract(request);
+      toast.success("NFT minted successfully");
+      setLoading(false);
+    } catch (error) {
+      toast.error("something went wrong");
+      console.log(error);
+      setLoading(false);
+    }
+  };
+
+  const getUserNft = async () => {
+    const data: any = await publicClient.readContract({
+      address: CONTRACT_ADDRESS,
+      abi: abi,
+      functionName: "getOwnersTokenId",
+      args: [address],
+    });
+    console.log(data);
+    data.forEach(async (item: any) => {
+      const metadata: any = await publicClient.readContract({
+        address: CONTRACT_ADDRESS,
+        abi: abi,
+        functionName: "tokenURI",
+        args: [item],
+      });
+      console.log(metadata);
+    });
+  };
+
+  useEffect(() => {
+    if (address && isConnected) {
+      getUserNft();
+    }
+  }, [address, userNft]);
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <div className="z-10 w-full max-w-5xl items-center justify-between font-mono text-sm lg:flex">
-        <p className="fixed left-0 top-0 flex w-full justify-center border-b border-gray-300 bg-gradient-to-b from-zinc-200 pb-6 pt-8 backdrop-blur-2xl dark:border-neutral-800 dark:bg-zinc-800/30 dark:from-inherit lg:static lg:w-auto  lg:rounded-xl lg:border lg:bg-gray-200 lg:p-4 lg:dark:bg-zinc-800/30">
-          Get started by editing&nbsp;
-          <code className="font-mono font-bold">src/app/page.tsx</code>
-        </p>
-        <div className="fixed bottom-0 left-0 flex h-48 w-full items-end justify-center bg-gradient-to-t from-white via-white dark:from-black dark:via-black lg:static lg:size-auto lg:bg-none">
-          <a
-            className="pointer-events-none flex place-items-center gap-2 p-8 lg:pointer-events-auto lg:p-0"
-            href="https://vercel.com?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            By{" "}
-            <Image
-              src="/vercel.svg"
-              alt="Vercel Logo"
-              className="dark:invert"
-              width={100}
-              height={24}
-              priority
-            />
-          </a>
+    <>
+      {!address && !isConnected ? (
+        <div className="flex justify-center items-center h-screen">
+          <h1>Please connect your wallet first</h1>
         </div>
-      </div>
+      ) : (
+        <>
+          <div className="flex justify-center items-center gap-4 mt-8">
+            {userNft && userNft.length > 0 ? (
+              <>
+                {userNft.map((item: any) => (
+                  <div className="card w-96 bg-base-100 shadow-xl">
+                    <figure className="px-10 pt-10">
+                      <img
+                        src={item.metadata.nftImage}
+                        alt="Image"
+                        className="rounded-xl"
+                      />
+                    </figure>
+                    <div className="card-body items-center text-center">
+                      <h2 className="card-title">{item.metadata.nftName}</h2>
+                      <p>{item.metadata.Description}</p>
+                    </div>
+                  </div>
+                ))}
+              </>
+            ) : (
+              <h1>You Don't have any NFT please mint</h1>
+            )}
+          </div>
 
-      <div className="relative z-[-1] flex place-items-center before:absolute before:h-[300px] before:w-full before:-translate-x-1/2 before:rounded-full before:bg-gradient-radial before:from-white before:to-transparent before:blur-2xl before:content-[''] after:absolute after:-z-20 after:h-[180px] after:w-full after:translate-x-1/3 after:bg-gradient-conic after:from-sky-200 after:via-blue-200 after:blur-2xl after:content-[''] before:dark:bg-gradient-to-br before:dark:from-transparent before:dark:to-blue-700 before:dark:opacity-10 after:dark:from-sky-900 after:dark:via-[#0141ff] after:dark:opacity-40 sm:before:w-[480px] sm:after:w-[240px] before:lg:h-[360px]">
-        <Image
-          className="relative dark:drop-shadow-[0_0_0.3rem_#ffffff70] dark:invert"
-          src="/next.svg"
-          alt="Next.js Logo"
-          width={180}
-          height={37}
-          priority
-        />
-      </div>
+          <div className="flex items-center flex-col mt-8 gap-2">
+            <h2>Mint a new NFT</h2>
+            <label className="form-control w-full max-w-xs">
+              <div className="label">
+                <span className="label-text">NFT Name</span>
+              </div>
+              <input
+                type="text"
+                onChange={(e) => setNftName(e.target.value)}
+                placeholder="Type here"
+                className="input input-bordered w-full max-w-xs"
+              />
+            </label>
 
-      <div className="mb-32 grid text-center lg:mb-0 lg:w-full lg:max-w-5xl lg:grid-cols-4 lg:text-left">
-        <a
-          href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Docs{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Find in-depth information about Next.js features and API.
-          </p>
-        </a>
+            <label className="form-control w-full max-w-xs">
+              <div className="label">
+                <span className="label-text">Description</span>
+              </div>
+              <textarea
+                onChange={(e) => setNftDescription(e.target.value)}
+                className="textarea textarea-bordered h-24 "
+                placeholder="Description"
+              ></textarea>
+            </label>
 
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Learn{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Learn about Next.js in an interactive course with&nbsp;quizzes!
-          </p>
-        </a>
+            <label className="form-control w-full max-w-xs">
+              <div className="label">
+                <span className="label-text">NFT Image</span>
+              </div>
+              <input
+                onChange={(e) => uploadFile(e.target.files)}
+                type="file"
+                className="file-input file-input-bordered w-full max-w-xs"
+              />
+            </label>
 
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Templates{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Explore starter templates for Next.js.
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Deploy{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-balance text-sm opacity-50">
-            Instantly deploy your Next.js site to a shareable URL with Vercel.
-          </p>
-        </a>
-      </div>
-    </main>
+            <button
+              disabled={loading}
+              className="btn btn-info mt-6 "
+              onClick={mintNft}
+            >
+              {loading ? "loading" : "Mint NFT"}
+            </button>
+          </div>
+        </>
+      )}
+    </>
   );
 }
